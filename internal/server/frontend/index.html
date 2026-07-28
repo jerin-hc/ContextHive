@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CtxHive</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <style>
+    .result-card {
+        border: 1px solid #dee2e6;
+        border-radius: 0.5rem;
+        padding: 1.25rem;
+        margin-bottom: 1rem;
+        background: #fff;
+    }
+    .result-card:last-child { margin-bottom: 0; }
+    .result-card .score-badge {
+        font-size: 0.8rem;
+    }
+    .result-card .markdown-body { margin-top: 0.75rem; }
+    .result-card .markdown-body pre {
+        background: #1e1e1e;
+        color: #d4d4d4;
+        padding: 1rem;
+        border-radius: 0.375rem;
+        overflow-x: auto;
+    }
+    .result-card .markdown-body code {
+        background: #f0f0f0;
+        padding: 0.15em 0.4em;
+        border-radius: 0.25rem;
+        font-size: 0.9em;
+    }
+    .result-card .markdown-body pre code {
+        background: transparent;
+        padding: 0;
+    }
+    .result-card .markdown-body table {
+        width: 100%;
+        border-collapse: collapse;
+    }
+    .result-card .markdown-body th, .result-card .markdown-body td {
+        border: 1px solid #dee2e6;
+        padding: 0.5rem 0.75rem;
+    }
+    .result-card .markdown-body th {
+        background: #f8f9fa;
+    }
+    .diff-block {
+        background: #1e1e1e;
+        color: #d4d4d4;
+        border-radius: 0.375rem;
+        padding: 0.75rem 1rem;
+        overflow-x: auto;
+        font-family: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', SFMono-Regular, Consolas, monospace;
+        font-size: 0.82rem;
+        line-height: 1.5;
+        white-space: pre;
+        margin-top: 0.5rem;
+    }
+    .diff-block .diff-add {
+        color: #7ee787;
+    }
+    .diff-block .diff-del {
+        color: #f47067;
+    }
+    .diff-block .diff-hdr {
+        color: #79c0ff;
+    }
+    .diff-block .diff-meta {
+        color: #8b949e;
+    }
+    .detail-section {
+        margin-top: 0.75rem;
+        border-top: 1px solid #e9ecef;
+        padding-top: 0.75rem;
+    }
+    .detail-section .section-toggle {
+        font-size: 0.85rem;
+        cursor: pointer;
+        user-select: none;
+    }
+    .detail-section .section-toggle:hover {
+        text-decoration: underline;
+    }
+    .detail-section .section-body {
+        margin-top: 0.5rem;
+    }
+    </style>
+</head>
+<body class="bg-light">
+    <nav class="navbar navbar-dark bg-dark mb-4">
+        <div class="container">
+            <span class="navbar-brand mb-0 h1">
+                <i class="bi bi-database me-2"></i>CtxHive
+            </span>
+        </div>
+    </nav>
+
+    <div class="container">
+        <div class="row g-4">
+            <div class="col-lg-6">
+                <div class="card shadow-sm">
+                    <div class="card-header bg-primary text-white">
+                        <i class="bi bi-plus-circle me-2"></i>Store Content
+                    </div>
+                    <div class="card-body">
+                        <form id="postForm">
+                            <!-- PR Section -->
+                            <fieldset class="mb-3 border rounded p-3">
+                                <legend class="float-none w-auto mb-0 px-2 h6 text-muted">
+                                    <i class="bi bi-git me-1"></i>Pull Request
+                                </legend>
+                                <div class="mb-2">
+                                    <label for="prTitle" class="form-label small">Title</label>
+                                    <input type="text" id="prTitle" class="form-control form-control-sm"
+                                        placeholder="PR title...">
+                                </div>
+                                <div class="mb-2">
+                                    <label for="prDescription" class="form-label small">Description</label>
+                                    <textarea id="prDescription" class="form-control form-control-sm" rows="2"
+                                        placeholder="PR description..."></textarea>
+                                </div>
+                                <div class="mb-2">
+                                    <label for="prDiff" class="form-label small">Diff</label>
+                                    <textarea id="prDiff" class="form-control form-control-sm" rows="3"
+                                        placeholder="Unified diff or patch..."></textarea>
+                                </div>
+                                <div class="mb-0">
+                                    <label for="prComments" class="form-label small">Comments</label>
+                                    <textarea id="prComments" class="form-control form-control-sm" rows="2"
+                                        placeholder="PR review comments..."></textarea>
+                                </div>
+                            </fieldset>
+
+                            <!-- Jira Section -->
+                            <fieldset class="mb-3 border rounded p-3">
+                                <legend class="float-none w-auto mb-0 px-2 h6 text-muted">
+                                    <i class="bi bi-ticket-perforated me-1"></i>Jira Issue
+                                </legend>
+                                <div class="mb-2">
+                                    <label for="jiraIssueKey" class="form-label small">Issue Key</label>
+                                    <input type="text" id="jiraIssueKey" class="form-control form-control-sm"
+                                        placeholder="e.g. PROJ-1234">
+                                </div>
+                                <div class="mb-2">
+                                    <label for="jiraSummary" class="form-label small">Summary</label>
+                                    <input type="text" id="jiraSummary" class="form-control form-control-sm"
+                                        placeholder="Issue summary/title...">
+                                </div>
+                                <div class="mb-2">
+                                    <label for="jiraDescription" class="form-label small">Description</label>
+                                    <textarea id="jiraDescription" class="form-control form-control-sm" rows="2"
+                                        placeholder="Issue description..."></textarea>
+                                </div>
+                                <div class="mb-0">
+                                    <label for="jiraComments" class="form-label small">Comments</label>
+                                    <textarea id="jiraComments" class="form-control form-control-sm" rows="2"
+                                        placeholder="Issue comments..."></textarea>
+                                </div>
+                            </fieldset>
+
+                            <!-- General Message -->
+                            <div class="mb-3">
+                                <label for="messageInput" class="form-label">Message</label>
+                                <textarea id="messageInput" class="form-control" rows="4"
+                                    placeholder="General message or free-form content..."></textarea>
+                            </div>
+
+                            <button type="submit" id="postBtn" class="btn btn-primary w-100">
+                                <i class="bi bi-upload me-1"></i> Store Content
+                            </button>
+                        </form>
+                        <div id="postResult" class="mt-3"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-lg-6">
+                <div class="card shadow-sm">
+                    <div class="card-header bg-success text-white">
+                        <i class="bi bi-search me-2"></i>Search Contents
+                    </div>
+                    <div class="card-body">
+                        <form id="queryForm">
+                            <div class="mb-3">
+                                <label for="queryInput" class="form-label">Search Query</label>
+                                <input type="text" id="queryInput" class="form-control"
+                                    placeholder="Enter search text..." required>
+                            </div>
+                            <button type="submit" id="queryBtn" class="btn btn-success w-100">
+                                <i class="bi bi-search me-1"></i> Search
+                            </button>
+                        </form>
+                        <div id="queryResult" class="mt-3"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+    const postForm = document.getElementById('postForm');
+    const queryForm = document.getElementById('queryForm');
+    const postResult = document.getElementById('postResult');
+    const queryResult = document.getElementById('queryResult');
+    const postBtn = document.getElementById('postBtn');
+    const queryBtn = document.getElementById('queryBtn');
+
+    function showAlert(container, type, content) {
+        container.innerHTML = `<div class="alert alert-${type} alert-dismissible fade show mb-0" role="alert">
+            ${content}
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        </div>`;
+    }
+
+    function formatDiff(diffText) {
+        const lines = diffText.split('\n');
+        return lines.map(line => {
+            let cls = '';
+            if (line.startsWith('+++') || line.startsWith('---')) {
+                cls = 'diff-hdr';
+            } else if (line.startsWith('@@')) {
+                cls = 'diff-meta';
+            } else if (line.startsWith('+')) {
+                cls = 'diff-add';
+            } else if (line.startsWith('-')) {
+                cls = 'diff-del';
+            }
+            const escaped = line.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+            return cls ? `<span class="${cls}">${escaped}</span>` : escaped;
+        }).join('\n');
+    }
+
+    function buildDetailSection(label, icon, content, isMarkdown) {
+        const id = 'section-' + Math.random().toString(36).substring(2, 10);
+        const body = isMarkdown
+            ? `<div class="markdown-body">${marked.parse(content)}</div>`
+            : `<div class="diff-block">${formatDiff(content)}</div>`;
+        return `<div class="detail-section">
+            <div class="section-toggle text-muted" data-bs-toggle="collapse"
+                 data-bs-target="#${id}" aria-expanded="false">
+                <i class="bi bi-${icon} me-1"></i>${label}
+                <i class="bi bi-chevron-down ms-1 small"></i>
+            </div>
+            <div class="collapse section-body" id="${id}">${body}</div>
+        </div>`;
+    }
+
+    function setLoading(btn, loading) {
+        if (loading) {
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Processing...';
+        }
+    }
+
+    function resetBtn(btn, icon, text) {
+        btn.disabled = false;
+        btn.innerHTML = `<i class="bi bi-${icon} me-1"></i> ${text}`;
+    }
+
+    function buildRequestBody() {
+        const body = {};
+
+        // PR fields
+        const prTitle = document.getElementById('prTitle').value.trim();
+        const prDescription = document.getElementById('prDescription').value.trim();
+        const prDiff = document.getElementById('prDiff').value.trim();
+        const prComments = document.getElementById('prComments').value.trim();
+        if (prTitle) body.pr_title = prTitle;
+        if (prDescription) body.pr_description = prDescription;
+        if (prDiff) body.pr_diff = prDiff;
+        if (prComments) body.pr_comments = prComments;
+
+        // Jira fields
+        const jiraIssueKey = document.getElementById('jiraIssueKey').value.trim();
+        const jiraSummary = document.getElementById('jiraSummary').value.trim();
+        const jiraDescription = document.getElementById('jiraDescription').value.trim();
+        const jiraComments = document.getElementById('jiraComments').value.trim();
+        if (jiraIssueKey) body.jira_issue_key = jiraIssueKey;
+        if (jiraSummary) body.jira_summary = jiraSummary;
+        if (jiraDescription) body.jira_description = jiraDescription;
+        if (jiraComments) body.jira_comments = jiraComments;
+
+        // Message
+        const message = document.getElementById('messageInput').value.trim();
+        if (message) body.message = message;
+
+        return body;
+    }
+
+    function clearPostForm() {
+        document.getElementById('prTitle').value = '';
+        document.getElementById('prDescription').value = '';
+        document.getElementById('prDiff').value = '';
+        document.getElementById('prComments').value = '';
+        document.getElementById('jiraIssueKey').value = '';
+        document.getElementById('jiraSummary').value = '';
+        document.getElementById('jiraDescription').value = '';
+        document.getElementById('jiraComments').value = '';
+        document.getElementById('messageInput').value = '';
+    }
+
+    postForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const body = buildRequestBody();
+        if (Object.keys(body).length === 0) {
+            showAlert(postResult, 'warning', '<i class="bi bi-exclamation-circle me-1"></i> Please fill at least one field.');
+            return;
+        }
+
+        setLoading(postBtn, true);
+        postResult.innerHTML = '';
+
+        try {
+            const res = await fetch('/content', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body)
+            });
+            const data = await res.json();
+            if (res.ok) {
+                showAlert(postResult, 'success', '<i class="bi bi-check-circle me-1"></i> Content stored successfully!');
+                clearPostForm();
+            } else {
+                showAlert(postResult, 'danger', `<i class="bi bi-exclamation-triangle me-1"></i> ${data.error || 'Failed to store content'}`);
+            }
+        } catch (err) {
+            showAlert(postResult, 'danger', `<i class="bi bi-exclamation-triangle me-1"></i> Network error: ${err.message}`);
+        } finally {
+            resetBtn(postBtn, 'upload', 'Store Content');
+        }
+    });
+
+    queryForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const text = document.getElementById('queryInput').value.trim();
+        if (!text) return;
+
+        setLoading(queryBtn, true);
+        queryResult.innerHTML = '';
+
+        try {
+            const res = await fetch('/content', {
+                method: 'QUERY',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ text })
+            });
+            const data = await res.json();
+            if (res.ok && data.results && data.results.length > 0) {
+                let html = `<div class="d-flex align-items-center mb-3">
+                    <i class="bi bi-check-circle-fill text-success me-2"></i>
+                    <strong>Found ${data.results.length} result(s)</strong>
+                </div>`;
+                data.results.forEach((r, i) => {
+                    // The API nests document fields under r.document; score is lowercase.
+                    const doc = r.document || {};
+                    const dist = r.score;
+                    const badgeColor = dist <= 0.3 ? 'bg-success'
+                        : dist <= 0.6 ? 'bg-info text-dark'
+                        : dist <= 0.9 ? 'bg-warning text-dark'
+                        : 'bg-danger';
+                    const label = dist <= 0.3 ? 'Strong match'
+                        : dist <= 0.6 ? 'Good match'
+                        : dist <= 0.9 ? 'Weak match'
+                        : 'Poor match';
+
+                    let details = '';
+                    if (doc.pr_description && doc.pr_description.trim()) {
+                        details += buildDetailSection('PR Description', 'file-text', doc.pr_description, true);
+                    }
+                    if (doc.pr_diff && doc.pr_diff.trim()) {
+                        details += buildDetailSection('PR Diff', 'git', doc.pr_diff, false);
+                    }
+
+                    html += `<div class="result-card">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <span class="text-muted small">Result #${i + 1}</span>
+                            <span class="badge ${badgeColor} score-badge">
+                                <i class="bi bi-graph-up me-1"></i>${label} (distance: ${dist.toFixed(4)})
+                            </span>
+                        </div>
+                        <div class="markdown-body">${marked.parse(doc.content || '')}</div>${details}
+                    </div>`;
+                });
+                queryResult.innerHTML = html;
+            } else if (res.ok) {
+                queryResult.innerHTML = `<div class="alert alert-info mb-0">
+                    <i class="bi bi-info-circle me-1"></i> No results found for your query.
+                </div>`;
+            } else {
+                showAlert(queryResult, 'danger', `<i class="bi bi-exclamation-triangle me-1"></i> ${data.error || 'Search failed'}`);
+            }
+        } catch (err) {
+            showAlert(queryResult, 'danger', `<i class="bi bi-exclamation-triangle me-1"></i> Network error: ${err.message}`);
+        } finally {
+            resetBtn(queryBtn, 'search', 'Search');
+        }
+    });
+    </script>
+</body>
+</html>
