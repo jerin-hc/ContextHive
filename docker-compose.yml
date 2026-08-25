@@ -72,7 +72,7 @@ services:
 
   standalone:
     container_name: milvus-standalone
-    image: milvusdb/milvus:v2.6.19
+    image: milvusdb/milvus:v3.0.0
     command: ["milvus", "run", "standalone"]
     security_opt:
       - seccomp:unconfined
@@ -96,7 +96,7 @@ services:
 
   ollama:
     container_name: ollama
-    image: ollama/ollama:latest
+    image: ollama/ollama:0.32.15
     restart: unless-stopped
     volumes:
       - ollama_data:/root/.ollama

@@ -4,7 +4,7 @@ go 1.26.5
 
 require (
 	github.com/milvus-io/milvus/client/v3 v3.0.0-beta
-	github.com/ollama/ollama v0.32.1
+	github.com/ollama/ollama v0.32.15
 )
 
 require (
@@ -21,7 +21,7 @@ require (
 	github.com/kr/pretty v0.3.1 // indirect
 	github.com/kr/text v0.2.0 // indirect
 	github.com/mailru/easyjson v0.7.7 // indirect
-	github.com/milvus-io/milvus-proto/go-api/v3 v3.0.0-20260625075625-7262f8042a55 // indirect
+	github.com/milvus-io/milvus-proto/go-api/v3 v3.0.0 // indirect
 	github.com/pingcap/errors v0.11.5-0.20211224045212-9687c2b0f87c // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
