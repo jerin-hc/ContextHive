@@ -13,7 +13,6 @@ services:
       CTXHIVE_MILVUS_ADDR: standalone:19530
       CTXHIVE_OLLAMA_ADDR: http://ollama:11434
       CTXHIVE_PORT: "8080"
-      CTXHIVE_GENERATE_MODEL: qwen2.5-coder:7b
       CTXHIVE_EMBED_MODEL: nomic-embed-text:v1.5
       CTXHIVE_CAPACITY: "65535"
       CTXHIVE_DIM: "768"

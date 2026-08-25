@@ -2,108 +2,144 @@
 
 **Engineering memory that works like your brain — store context once, find it when you need it.**
 
-CtxHive captures the context you accumulate while working on issues, features, and pull requests, then distills it into dense, keyword-rich summaries stored in a vector database. When a new requirement or question comes up, semantic search surfaces the relevant past context so you don't start from scratch.
+CtxHive stores the context you accumulate while working: design docs, decision logs, incident notes, code snippets, meeting summaries. Each record is described by a `summary` that gets embedded and stored in a vector database. When a new requirement or question comes up, semantic search surfaces the relevant past context so you don't start from scratch.
 
 ## How It Works
 
 ```
-Jira + PR + Message  ──▶  LLM Summarisation  ──▶  Embedding  ──▶  Milvus Vector DB
-                                                                          │
-New Requirement  ──▶  Embed Query  ──▶  Semantic Search  ◀───────────────┘
-                                          │
-                                          ▼
-                                   Ranked Results
+Store:  summary + content ──▶  Ollama Embed  ──▶  Milvus Vector DB
+                                                  (one collection per project)
+                                                                     │
+Query:  text ──▶  Ollama Embed  ──▶  Similarity Search  ◀───────────┘
+                                         │
+                                         ▼
+                                  Ranked Results
 ```
 
-1. **Ingest** — POST a mix of Jira issue details, GitHub PR info, and/or free-form developer notes. The LLM (`qwen2.5-coder:7b`) produces a dense, keyword-rich summary that preserves every technical detail (API names, file paths, error codes, code snippets, diffs).
-2. **Store** — The summary is embedded with `nomic-embed-text:v1.5` and stored in [Milvus](https://milvus.io/), along with all original metadata (Jira keys, PR titles, diffs, comments).
-3. **Search** — When a new requirement or question arises, embed the query and run a vector similarity search. CtxHive returns the most semantically relevant past context, so you can recall decisions, approaches, and pitfalls without digging through channels or tickets.
+1. **Store** — `POST /content` accepts a generic record: a required `summary` (the text that gets embedded for search) plus optional `content`, `kind`, `title`, `tags`, `source`, and `metadata`. The summary is embedded with `nomic-embed-text:v1.5` and stored in [Milvus](https://milvus.io/), along with the full record. Each `projectName` maps to its own Milvus collection.
+2. **Search** — `QUERY /content` embeds your query text and runs a vector similarity search against a project's collection. Results are ranked by L2 distance (lower = more similar) and filtered by a maximum distance threshold.
 
 ## Architecture
 
 ```
 ┌─────────────┐     ┌──────────┐     ┌───────────┐
-│   Go HTTP   │────▶│  Ollama  │────▶│  Milvus   │
-│   Server    │     │  (LLM)   │     │ (Vector   │
-│  :8080      │◀────│          │◀────│   DB)     │
+│   Go HTTP   │────▶│  Ollama  │     │  Milvus   │
+│   Server    │     │ (embed)  │     │ (Vector   │
+│  :8080      │◀────│          │     │   DB)     │
 └─────────────┘     └──────────┘     └───────────┘
 ```
 
 | Component | Role |
 |-----------|------|
 | **Go HTTP Server** (`:8080`) | REST API + embedded Web UI |
-| **Ollama** (`:11434`) | Local LLM inference — `qwen2.5-coder:7b` for summarisation, `nomic-embed-text:v1.5` for embeddings |
+| **Ollama** (`:11434`) | Local embedding inference — `nomic-embed-text:v1.5` |
 | **Milvus** (`:19530`) | Vector database for semantic storage and similarity search |
 
 ## Prerequisites
 
-- [Go](https://go.dev/) 1.26+
-- [Docker](https://www.docker.com/) & Docker Compose
-- [Ollama](https://ollama.com/) (or use the Docker Compose Ollama service)
+- [Docker](https://www.docker.com/) & Docker Compose — for the full stack
+- [Go](https://go.dev/) 1.26.5+ — only if running the server outside Docker
+- [Ollama](https://ollama.com/) — only if running the server outside Docker (the Compose stack ships its own)
 
 ## Quick Start
 
-### 1. Start Infrastructure
+### Option A: Full stack with Docker Compose (recommended)
 
 ```sh
-docker compose up -d
+docker compose up -d --build
 ```
 
-This brings up Milvus (with etcd + MinIO) and Ollama. Wait for the health checks to pass:
+This builds the CtxHive image and starts it alongside Milvus (with etcd + MinIO) and Ollama, waiting for each dependency's health check before the app comes up. On first start the app pulls the embedding model through Ollama — this can take a minute.
 
 ```sh
 docker compose ps
 ```
 
-### 2. Pull Required Models
+Once `ctxhive` is healthy, open the Web UI at `http://localhost:8080`.
 
-If using the containerised Ollama, pull the models inside the container:
+### Option B: Run with Go locally
+
+Start the Milvus side of the stack:
 
 ```sh
-docker exec ollama ollama pull qwen2.5-coder:7b
-docker exec ollama ollama pull nomic-embed-text:v1.5
+docker compose up -d etcd minio standalone
 ```
 
-The app will also pull them on startup, but pre-pulling is faster.
-
-### 3. Run CtxHive
+Run a local Ollama and pull the embedding model:
 
 ```sh
+ollama serve
+ollama pull nomic-embed-text:v1.5
+```
+
+Then set the configuration and run the server. All environment variables are required — the app exits with a fatal error if any is missing.
+
+```sh
+export CTXHIVE_MILVUS_ADDR=localhost:19530
+export CTXHIVE_OLLAMA_ADDR=http://localhost:11434
+export CTXHIVE_PORT=8080
+export CTXHIVE_EMBED_MODEL=nomic-embed-text:v1.5
+export CTXHIVE_CAPACITY=65535
+export CTXHIVE_DIM=768
+
 go run main.go
 ```
 
-The server starts on `http://localhost:8080`. The Web UI is served at that address.
+The server starts on `http://localhost:8080` with the Web UI at that address.
+
+## Configuration
+
+| Variable | Required | Description | Example |
+|----------|----------|-------------|---------|
+| `CTXHIVE_MILVUS_ADDR` | Yes | Milvus server address | `standalone:19530` |
+| `CTXHIVE_OLLAMA_ADDR` | Yes | Ollama base URL | `http://ollama:11434` |
+| `CTXHIVE_PORT` | Yes | HTTP server port | `8080` |
+| `CTXHIVE_EMBED_MODEL` | Yes | Ollama model used for embeddings | `nomic-embed-text:v1.5` |
+| `CTXHIVE_CAPACITY` | Yes | Max length (chars) of the stored `content` field | `65535` |
+| `CTXHIVE_DIM` | Yes | Embedding vector dimension | `768` |
 
 ## API Reference
 
 ### `POST /content` — Store Context
 
-Submit Jira, PR, and/or message data. CtxHive runs it through the LLM to create a dense summary, embeds it, and persists everything in Milvus.
+Store a record. The `summary` is the description of the record and the text that gets embedded for semantic search; the rest of the fields are stored alongside it and returned in search results.
 
 ```json
 {
-  "pr_title": "Fix OOM in search indexing pipeline",
-  "pr_description": "The indexing worker was loading entire segment into memory...",
-  "pr_diff": "@@ -45,7 +45,7 @@ func buildIndex(seg *Segment) error { ... }",
-  "pr_comments": "LGTM, but let's add a guard on segment size before merging.",
-  "jira_issue_key": "SEARCH-421",
-  "jira_summary": "Search OOM on large indexes",
-  "jira_description": "Production search nodes OOM when processing indexes > 2GB.",
-  "jira_comments": "Root cause: the chunker reads the full segment upfront.",
-  "message": "We should also backport this fix to the v2 release branch."
+  "summary": "Indexing worker OOMs on segments > 2GB because the chunker loads the full segment into memory. Fix: stream chunks and guard segment size before merging. Root cause found during SEARCH-421 on-call.",
+  "content": "## Incident report\n\nProduction search nodes OOM when processing indexes > 2GB...",
+  "kind": "incident",
+  "title": "Fix OOM in search indexing pipeline",
+  "projectName": "search-service",
+  "tags": ["oom", "indexing", "memory"],
+  "source": "on-call-notes",
+  "metadata": {
+    "ticket": "SEARCH-421",
+    "branch": "fix/oom-indexer"
+  }
 }
 ```
 
-Any field can be omitted — provide at least one.
+| Field | Required | Description |
+|-------|----------|-------------|
+| `summary` | Yes | Description of the record — embedded for semantic search |
+| `content` | No | The full record text |
+| `kind` | No | Kind of content, e.g. `discovery`, `incident` |
+| `title` | No | Short human-readable title |
+| `projectName` | No | Which collection to store in; defaults to `default` |
+| `tags` | No | Free-form tags |
+| `source` | No | Where the content came from |
+| `metadata` | No | Extra context, e.g. ticket ids or branch names |
 
 **Response:** `{"status": "ok"}`
 
 ### `QUERY /content` — Semantic Search
 
-Search your stored context by meaning, not keywords. CtxHive embeds your query text and finds the most similar stored documents.
+Search a project's stored context by meaning, not keywords. The server embeds your query text and finds the most similar stored documents. Note the custom HTTP method: **`QUERY`**.
 
 ```json
 {
+  "projectName": "search-service",
   "text": "memory leak in indexing pipeline",
   "topK": 3,
   "maxDistance": 0.9
@@ -112,9 +148,10 @@ Search your stored context by meaning, not keywords. CtxHive embeds your query t
 
 | Field | Required | Default | Description |
 |-------|----------|---------|-------------|
-| `text` | Yes | — | The query text to search for |
+| `projectName` | No | `default` | Collection to search |
+| `text` | Yes | — | The query text to embed and search for |
 | `topK` | No | `3` | Max number of results to return |
-| `maxDistance` | No | `0.9` | Distance threshold (lower = stricter similarity) |
+| `maxDistance` | No | `0.9` | L2 distance threshold (lower = stricter similarity) |
 
 **Response:**
 
@@ -124,11 +161,13 @@ Search your stored context by meaning, not keywords. CtxHive embeds your query t
   "results": [
     {
       "document": {
-        "content": "## Pull Request\n\n**Title:** Fix OOM in search indexing pipeline...",
-        "pr_title": "Fix OOM in search indexing pipeline",
-        "pr_diff": "@@ -45,7 +45,7 @@ func buildIndex...",
-        "jira_issue_key": "SEARCH-421",
-        "message": "We should also backport this fix..."
+        "summary": "Indexing worker OOMs on segments > 2GB because...",
+        "content": "## Incident report\n\nProduction search nodes OOM...",
+        "kind": "incident",
+        "title": "Fix OOM in search indexing pipeline",
+        "tags": ["oom", "indexing", "memory"],
+        "source": "on-call-notes",
+        "metadata": { "ticket": "SEARCH-421", "branch": "fix/oom-indexer" }
       },
       "score": 0.234
     }
@@ -136,31 +175,34 @@ Search your stored context by meaning, not keywords. CtxHive embeds your query t
 }
 ```
 
+`score` is the L2 distance from the query vector — **lower means more similar**. Results above `maxDistance` are filtered out.
+
 ### `GET /` — Web UI
 
-A browser-based interface for testing ingest and search. Open `http://localhost:8080` in your browser.
+A browser-based interface for storing and searching context. Open `http://localhost:8080` in your browser.
 
 ## Project Structure
 
 ```
 CtxHive/
-├── main.go                          # Entry point — wires up Milvus, Ollama, and HTTP server
-├── docker-compose.yml               # Milvus (etcd + MinIO) + Ollama
+├── main.go                          # Entry point — env config, wires up Milvus, Ollama, and HTTP server
+├── Dockerfile                       # Multi-stage static build
+├── docker-compose.yml               # Full stack: CtxHive + Milvus (etcd + MinIO) + Ollama
 ├── configs/
-│   └── milvus.yaml                  # Milvus cluster config
+│   └── milvus.yaml                  # Milvus config
 ├── internal/
 │   ├── model/
-│   │   └── model.go                 # Model interface (Generate, Embed)
+│   │   ├── model.go                 # Model interface (Embed)
+│   │   └── ollama/
+│   │       └── ollama.go            # Ollama client — embed, pull
 │   ├── repository/
-│   │   └── repository.go            # Repository interface + Document/SearchResult types
-│   ├── milvus/
-│   │   ├── client.go                # Milvus client — schema, insert, search
-│   │   └── document.go              # Milvus-specific document type
-│   ├── ollama/
-│   │   └── ollama.go                # Ollama client — generate, embed, pull
+│   │   ├── repository.go            # Repository interface + Document/SearchResult types
+│   │   └── milvus/
+│   │       ├── client.go            # Milvus client — schema, insert, search
+│   │       └── document.go          # Milvus-specific document type
 │   └── server/
 │       ├── server.go                # HTTP server setup
-│       ├── handler.go               # Route handlers + LLM summarisation prompt
+│       ├── handler.go               # Route handlers
 │       ├── request_schema.go        # ContentRequest / QueryRequest types
 │       └── frontend/
 │           └── index.html           # Embedded Web UI
@@ -169,25 +211,16 @@ CtxHive/
 
 ## Design Decisions
 
-- **LLM-driven summarisation.** Raw Jira and PR data often contains noise (boilerplate, long threads). The LLM condenses it into a dense, search-optimised form while preserving every technical keyword, code snippet, and decision detail. This dramatically improves semantic search recall compared to embedding raw input directly.
-- **Single-collection simplicity.** All documents live in one Milvus collection with typed metadata columns. For single-project use, this keeps the API simple and avoids the fragmentation of per-source collections.
+- **You write the summary, the system embeds it.** There is no LLM summarisation step — the caller controls exactly what gets embedded. Keep the summary dense and keyword-rich (API names, file paths, error codes, decisions); the full detail lives in `content` and is returned with every match.
+- **One collection per project.** Each `projectName` maps to its own Milvus collection (special characters are normalised to underscores), so projects stay isolated without cross-talk in search results.
 - **Local-first, no external APIs.** Ollama + Milvus run entirely on your machine. No data leaves your environment, and no API keys are required.
-
-## Default Models
-
-| Purpose | Model | Notes |
-|---------|-------|-------|
-| Summarisation | `qwen2.5-coder:7b` | Code-aware, good for technical content |
-| Embedding | `nomic-embed-text:v1.5` | 768-dimensional embeddings |
-
-You can change these by editing the constants in `main.go`.
 
 ## Use Cases
 
-- **On-call handoffs.** Store incident context (Jira ticket + PR fix + Slack thread dump) and search past incidents by symptom description.
-- **Feature planning.** Ingest design docs, spike PRs, and decision logs; query them when a related feature comes up.
-- **Code review continuity.** Store PR diffs and review discussions; surface prior art when reviewing similar changes later.
+- **On-call handoffs.** Store incident context (report, fix details, symptom description) and search past incidents by symptom when the next one hits.
+- **Feature planning.** Ingest design docs, spike results, and decision logs; query them when a related feature comes up.
 - **Knowledge retention.** As team members come and go, CtxHive keeps the *why* behind decisions searchable.
+- **Personal engineering memory.** Drop in anything worth remembering — commands, debugging sessions, API quirks — and recall it by meaning later.
 
 ## License
 
