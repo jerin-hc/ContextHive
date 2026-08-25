@@ -1,6 +1,36 @@
-version: '3.5'
-
 services:
+  # CtxHive API — built from the local Dockerfile first, then started only
+  # after every backend below reports healthy. The only service exposed
+  # to the host; everything else lives on the internal network.
+  ctx_hive:
+    container_name: ctxhive
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ctxhive:latest
+    restart: unless-stopped
+    environment:
+      CTXHIVE_MILVUS_ADDR: standalone:19530
+      CTXHIVE_OLLAMA_ADDR: http://ollama:11434
+      CTXHIVE_PORT: "8080"
+      CTXHIVE_GENERATE_MODEL: qwen2.5-coder:7b
+      CTXHIVE_EMBED_MODEL: nomic-embed-text:v1.5
+      CTXHIVE_CAPACITY: "65535"
+      CTXHIVE_DIM: "768"
+    ports:
+      - "8080:8080"
+    networks:
+      - internal
+    depends_on:
+      etcd:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      standalone:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+
   etcd:
     container_name: milvus-etcd
     image: quay.io/coreos/etcd:v3.5.25
@@ -16,6 +46,8 @@ services:
       -advertise-client-urls=http://etcd:2379
       -listen-client-urls=http://0.0.0.0:2379
       --data-dir=/etcd
+    networks:
+      - internal
     healthcheck:
       test: ["CMD", "etcdctl", "endpoint", "health"]
       interval: 30s
@@ -29,11 +61,10 @@ services:
       MINIO_ACCESS_KEY: minioadmin
       MINIO_SECRET_KEY: minioadmin
     command: minio server /minio_data --console-address ":9001"
-    ports:
-      - "9000:9000"
-      - "9001:9001"
     volumes:
       - minio_data:/minio_data
+    networks:
+      - internal
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
       interval: 30s
@@ -52,9 +83,8 @@ services:
       MQ_TYPE: woodpecker
     volumes:
       - milvus_data:/var/lib/milvus
-    ports:
-      - "19530:19530"
-      - "9091:9091"
+    networks:
+      - internal
     depends_on:
       - etcd
       - minio
@@ -69,14 +99,20 @@ services:
     container_name: ollama
     image: ollama/ollama:latest
     restart: unless-stopped
-    ports:
-      - "11434:11434"
     volumes:
       - ollama_data:/root/.ollama
+    networks:
+      - internal
     dns:
       - 1.1.1.1
       - 8.8.8.8
     gpus: all
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      start_period: 15s
+      timeout: 5s
+      retries: 6
 
 volumes:
   etcd_data:
@@ -85,5 +121,5 @@ volumes:
   ollama_data:
 
 networks:
-  default:
-    name: milvus
+  internal:
+    name: ctxhive_internal

@@ -7,7 +7,6 @@ import (
 	"log"
 	"net/http"
 	"net/url"
-	"strings"
 
 	"github.com/ollama/ollama/api"
 )
@@ -19,9 +18,9 @@ type Ollama struct {
 	client        *api.Client
 }
 
-func NewOllamaClient(ctx context.Context, addr string, embedModel string, generateModel string) (*Ollama, error) {
-	if generateModel == "" || embedModel == "" {
-		log.Printf("[ERROR] Invalid Ollama model names: generate=%q, embed=%q", generateModel, embedModel)
+func NewOllamaClient(ctx context.Context, addr string, embedModel string) (*Ollama, error) {
+	if embedModel == "" {
+		log.Printf("[ERROR] Invalid Ollama model names: embed=%q", embedModel)
 		return nil, errors.New("error, invalid model name")
 	}
 	u, err := url.Parse(addr)
@@ -29,36 +28,19 @@ func NewOllamaClient(ctx context.Context, addr string, embedModel string, genera
 		log.Printf("[ERROR] Failed to parse Ollama address %q: %v", addr, err)
 		return nil, fmt.Errorf("error, invalid ollama address %v", err)
 	}
-	log.Printf("[INFO] Ollama client created (addr=%s, generate_model=%q, embed_model=%q)", addr, generateModel, embedModel)
-	return &Ollama{
-		ctx:           ctx,
-		embedModel:    embedModel,
-		generateModel: generateModel,
-		client:        api.NewClient(u, http.DefaultClient),
-	}, nil
-}
-
-func (o *Ollama) Generate(message string) (string, error) {
-	log.Printf("[INFO] Generating response (model=%q, prompt_len=%d)", o.generateModel, len(message))
-
-	req := &api.GenerateRequest{
-		Model:  o.generateModel,
-		Prompt: message,
+	log.Printf("[INFO] Ollama client created (addr=%s, embed_model=%q)", addr, embedModel)
+	o := &Ollama{
+		ctx:        ctx,
+		embedModel: embedModel,
+		client:     api.NewClient(u, http.DefaultClient),
 	}
 
-	var fullResponse strings.Builder
-	respFunc := func(resp api.GenerateResponse) error {
-		fullResponse.WriteString(resp.Response)
-		return nil
+	log.Printf("[INFO] Pulling embed model %q", embedModel)
+	if err := o.pull(embedModel); err != nil {
+		log.Printf("[ERROR] Failed to pull embed model %q: %v", embedModel, err)
+		log.Panic(err)
 	}
-
-	err := o.client.Generate(o.ctx, req, respFunc)
-	if err != nil {
-		log.Printf("[ERROR] Generation failed (model=%q): %v", o.generateModel, err)
-		return "", fmt.Errorf("generation error: %v", err)
-	}
-	log.Printf("[INFO] Generation complete (model=%q, response_len=%d)", o.generateModel, fullResponse.Len())
-	return fullResponse.String(), nil
+	return o, nil
 }
 
 func (o *Ollama) Embed(content string) ([][]float32, error) {
@@ -79,7 +61,7 @@ func (o *Ollama) Embed(content string) ([][]float32, error) {
 	return resp.Embeddings, nil
 }
 
-func (o *Ollama) Pull(model string) error {
+func (o *Ollama) pull(model string) error {
 	log.Printf("[INFO] Pulling model %q", model)
 	req := &api.PullRequest{
 		Model: model,

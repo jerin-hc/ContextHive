@@ -1,23 +1,18 @@
 package server
 
 type ContentRequest struct {
-	// Git PR fields
-	PRTitle       string `json:"pr_title,omitempty"`
-	PRDescription string `json:"pr_description,omitempty"`
-	PRDiff        string `json:"pr_diff,omitempty"`
-	PRComments    string `json:"pr_comments,omitempty"`
-
-	// Jira fields
-	JiraIssueKey    string `json:"jira_issue_key,omitempty"`
-	JiraSummary     string `json:"jira_summary,omitempty"`
-	JiraDescription string `json:"jira_description,omitempty"`
-	JiraComments    string `json:"jira_comments,omitempty"`
-
-	// General message
-	Message string `json:"message,omitempty"`
+	Summary     string            `json:"summary"` // required: full description of the record; embedded for semantic search
+	Content     string            `json:"content"`
+	Kind        string            `json:"kind"`
+	Title       string            `json:"title"`
+	ProjectName string            `json:"projectName,omitempty"`
+	Tags        []string          `json:"tags,omitempty"`
+	Source      string            `json:"source,omitempty"`
+	Metadata    map[string]string `json:"metadata,omitempty"`
 }
 
 type QueryRequest struct {
+	ProjectName string  `json:"projectName"`
 	Text        string  `json:"text"`
 	TopK        int     `json:"topK,omitempty"`
 	MaxDistance float32 `json:"maxDistance,omitempty"`

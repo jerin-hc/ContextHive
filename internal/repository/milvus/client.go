@@ -2,9 +2,12 @@ package milvus
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
+	"strings"
 
+	"github.com/milvus-io/milvus/client/v3/column"
 	"github.com/milvus-io/milvus/client/v3/entity"
 	"github.com/milvus-io/milvus/client/v3/index"
 	"github.com/milvus-io/milvus/client/v3/milvusclient"
@@ -14,24 +17,22 @@ import (
 
 // Field length constants for Milvus VarChar columns.
 const (
-	maxContentType  = 50
-	maxIssueKey     = 255
-	maxTitleSummary = 1024
+	maxKind    = 50
+	maxTitle   = 1024
+	maxSource  = 1024
+	maxSummary = 4096
 )
 
 // fieldNames lists every user-defined scalar column in the schema (excluding id and embedding).
 // Used by both Insert (to build column slices) and Search (to request output fields).
 var fieldNames = []string{
-	"content",
-	"pr_title",
-	"pr_description",
-	"pr_diff",
-	"pr_comments",
-	"jira_issue_key",
-	"jira_summary",
-	"jira_description",
-	"jira_comments",
-	"message",
+	repository.FieldSummary,
+	repository.FieldContent,
+	repository.FieldKind,
+	repository.FieldTitle,
+	repository.FieldTags,
+	repository.FieldSource,
+	repository.FieldMetadata,
 }
 
 type milvus struct {
@@ -63,7 +64,41 @@ func (m *milvus) GetMaxCappacity() int64 {
 	return m.cappacity
 }
 
+// normalizeCollectionName converts a user-supplied project name into a valid
+// Milvus collection name. Milvus only allows letters, numbers, and underscores,
+// and the name must not start with a digit. Special characters are replaced
+// with underscores (rather than dropped) so distinct names like "my-project"
+// and "myproject" cannot collapse into the same collection.
+func normalizeCollectionName(name string) string {
+	const fallback = "default"
+
+	if name == "" {
+		return fallback
+	}
+
+	var b strings.Builder
+	b.Grow(len(name))
+	for _, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '_':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('_')
+		}
+	}
+
+	out := b.String()
+	if out == "" {
+		return fallback
+	}
+	if out[0] >= '0' && out[0] <= '9' {
+		out = "_" + out
+	}
+	return out
+}
+
 func (m *milvus) CreateSchema(ctx context.Context, documentName string) error {
+	documentName = normalizeCollectionName(documentName)
 	log.Printf("[INFO] Creating/loading schema for collection %q", documentName)
 
 	// Check if the collection already exists (e.g. from a previous run)
@@ -81,79 +116,58 @@ func (m *milvus) CreateSchema(ctx context.Context, documentName string) error {
 		schema := entity.NewSchema().
 			WithField(
 				entity.NewField().
-					WithName("id").
+					WithName(repository.FieldID).
 					WithDataType(entity.FieldTypeInt64).
 					WithIsPrimaryKey(true).
 					WithIsAutoID(true),
 			).
-			// --- Main embeddable text ---
+			// --- Description embedded for semantic search ---
 			WithField(
 				entity.NewField().
-					WithName("content").
+					WithName(repository.FieldSummary).
+					WithDataType(entity.FieldTypeVarChar).
+					WithMaxLength(maxSummary),
+			).
+			// --- Full record text ---
+			WithField(
+				entity.NewField().
+					WithName(repository.FieldContent).
 					WithDataType(entity.FieldTypeVarChar).
 					WithMaxLength(m.cappacity),
 			).
-			// --- Git PR fields ---
+			// --- Content metadata ---
 			WithField(
 				entity.NewField().
-					WithName("pr_title").
+					WithName(repository.FieldKind).
 					WithDataType(entity.FieldTypeVarChar).
-					WithMaxLength(maxTitleSummary),
+					WithMaxLength(maxKind),
 			).
 			WithField(
 				entity.NewField().
-					WithName("pr_description").
+					WithName(repository.FieldTitle).
 					WithDataType(entity.FieldTypeVarChar).
-					WithMaxLength(m.cappacity),
+					WithMaxLength(maxTitle),
 			).
 			WithField(
 				entity.NewField().
-					WithName("pr_diff").
+					WithName(repository.FieldSource).
 					WithDataType(entity.FieldTypeVarChar).
-					WithMaxLength(m.cappacity),
+					WithMaxLength(maxSource),
 			).
 			WithField(
 				entity.NewField().
-					WithName("pr_comments").
-					WithDataType(entity.FieldTypeVarChar).
-					WithMaxLength(m.cappacity),
-			).
-			// --- Jira fields ---
-			WithField(
-				entity.NewField().
-					WithName("jira_issue_key").
-					WithDataType(entity.FieldTypeVarChar).
-					WithMaxLength(maxIssueKey),
+					WithName(repository.FieldTags).
+					WithDataType(entity.FieldTypeJSON),
 			).
 			WithField(
 				entity.NewField().
-					WithName("jira_summary").
-					WithDataType(entity.FieldTypeVarChar).
-					WithMaxLength(maxTitleSummary),
-			).
-			WithField(
-				entity.NewField().
-					WithName("jira_description").
-					WithDataType(entity.FieldTypeVarChar).
-					WithMaxLength(m.cappacity),
-			).
-			WithField(
-				entity.NewField().
-					WithName("jira_comments").
-					WithDataType(entity.FieldTypeVarChar).
-					WithMaxLength(m.cappacity),
-			).
-			// --- General message ---
-			WithField(
-				entity.NewField().
-					WithName("message").
-					WithDataType(entity.FieldTypeVarChar).
-					WithMaxLength(m.cappacity),
+					WithName(repository.FieldMetadata).
+					WithDataType(entity.FieldTypeJSON),
 			).
 			// --- Embedding vector ---
 			WithField(
 				entity.NewField().
-					WithName("embedding").
+					WithName(repository.FieldEmbedding).
 					WithDataType(entity.FieldTypeFloatVector).
 					WithDim(m.dim),
 			)
@@ -171,7 +185,7 @@ func (m *milvus) CreateSchema(ctx context.Context, documentName string) error {
 		// Create an index on the embedding vector field (required before loading)
 		log.Printf("[INFO] Creating auto-index (L2) on embedding field for collection %q", documentName)
 		idx := index.NewAutoIndex(entity.L2)
-		indexOption := milvusclient.NewCreateIndexOption(documentName, "embedding", idx).WithIndexName("embedding_idx")
+		indexOption := milvusclient.NewCreateIndexOption(documentName, repository.FieldEmbedding, idx).WithIndexName("embedding_idx")
 		if _, err := m.client.CreateIndex(ctx, indexOption); err != nil {
 			log.Printf("[ERROR] Failed to create index for collection %q: %v", documentName, err)
 			return fmt.Errorf("error creating index: %w", err)
@@ -190,23 +204,32 @@ func (m *milvus) CreateSchema(ctx context.Context, documentName string) error {
 	return nil
 }
 
-// docFields extracts the scalar field values from a Document into individual slices
+// docFields extracts the string field values from a Document into individual slices
 // that can be passed to WithVarcharColumn. The slices are indexed in the same order
 // as the fieldNames package variable.
 func docFields(docs []repository.Document) map[string][]string {
 	n := len(docs)
 	return map[string][]string{
-		"content":          makeStrSlice(n, func(i int) string { return docs[i].Content }),
-		"pr_title":         makeStrSlice(n, func(i int) string { return docs[i].PRTitle }),
-		"pr_description":   makeStrSlice(n, func(i int) string { return docs[i].PRDescription }),
-		"pr_diff":          makeStrSlice(n, func(i int) string { return docs[i].PRDiff }),
-		"pr_comments":      makeStrSlice(n, func(i int) string { return docs[i].PRComments }),
-		"jira_issue_key":   makeStrSlice(n, func(i int) string { return docs[i].JiraIssueKey }),
-		"jira_summary":     makeStrSlice(n, func(i int) string { return docs[i].JiraSummary }),
-		"jira_description": makeStrSlice(n, func(i int) string { return docs[i].JiraDescription }),
-		"jira_comments":    makeStrSlice(n, func(i int) string { return docs[i].JiraComments }),
-		"message":          makeStrSlice(n, func(i int) string { return docs[i].Message }),
+		repository.FieldSummary: makeStrSlice(n, func(i int) string { return docs[i].Summary }),
+		repository.FieldContent: makeStrSlice(n, func(i int) string { return docs[i].Content }),
+		repository.FieldKind:    makeStrSlice(n, func(i int) string { return docs[i].Kind }),
+		repository.FieldTitle:   makeStrSlice(n, func(i int) string { return docs[i].Title }),
+		repository.FieldSource:  makeStrSlice(n, func(i int) string { return docs[i].Source }),
 	}
+}
+
+// jsonColumn marshals one JSON value per document (used for the tags and metadata
+// columns, which are stored as Milvus JSON fields).
+func jsonColumn[T any](docs []repository.Document, fn func(repository.Document) T) ([][]byte, error) {
+	col := make([][]byte, len(docs))
+	for i, d := range docs {
+		b, err := json.Marshal(fn(d))
+		if err != nil {
+			return nil, err
+		}
+		col[i] = b
+	}
+	return col, nil
 }
 
 func makeStrSlice(n int, fn func(int) string) []string {
@@ -218,6 +241,8 @@ func makeStrSlice(n int, fn func(int) string) []string {
 }
 
 func (m *milvus) Insert(ctx context.Context, collectionName string, docs []repository.Document, vectors [][]float32) error {
+	collectionName = normalizeCollectionName(collectionName)
+
 	if len(docs) == 0 {
 		log.Printf("[WARN] Insert called on collection %q with 0 documents — nothing to insert", collectionName)
 		return nil
@@ -227,20 +252,38 @@ func (m *milvus) Insert(ctx context.Context, collectionName string, docs []repos
 
 	fields := docFields(docs)
 
-	opt := milvusclient.NewColumnBasedInsertOption(collectionName).
-		WithVarcharColumn("content", fields["content"]).
-		WithVarcharColumn("pr_title", fields["pr_title"]).
-		WithVarcharColumn("pr_description", fields["pr_description"]).
-		WithVarcharColumn("pr_diff", fields["pr_diff"]).
-		WithVarcharColumn("pr_comments", fields["pr_comments"]).
-		WithVarcharColumn("jira_issue_key", fields["jira_issue_key"]).
-		WithVarcharColumn("jira_summary", fields["jira_summary"]).
-		WithVarcharColumn("jira_description", fields["jira_description"]).
-		WithVarcharColumn("jira_comments", fields["jira_comments"]).
-		WithVarcharColumn("message", fields["message"]).
-		WithFloatVectorColumn("embedding", int(m.dim), vectors)
+	tags, err := jsonColumn(docs, func(d repository.Document) []string {
+		if d.Tags == nil {
+			return []string{}
+		}
+		return d.Tags
+	})
+	if err != nil {
+		return fmt.Errorf("error marshalling tags: %w", err)
+	}
+	metadata, err := jsonColumn(docs, func(d repository.Document) map[string]string {
+		if d.Metadata == nil {
+			return map[string]string{}
+		}
+		return d.Metadata
+	})
+	if err != nil {
+		return fmt.Errorf("error marshalling metadata: %w", err)
+	}
 
-	_, err := m.client.Insert(ctx, opt)
+	opt := milvusclient.NewColumnBasedInsertOption(collectionName).
+		WithVarcharColumn(repository.FieldSummary, fields[repository.FieldSummary]).
+		WithVarcharColumn(repository.FieldContent, fields[repository.FieldContent]).
+		WithVarcharColumn(repository.FieldKind, fields[repository.FieldKind]).
+		WithVarcharColumn(repository.FieldTitle, fields[repository.FieldTitle]).
+		WithVarcharColumn(repository.FieldSource, fields[repository.FieldSource]).
+		WithColumns(
+			column.NewColumnJSONBytes(repository.FieldTags, tags),
+			column.NewColumnJSONBytes(repository.FieldMetadata, metadata),
+		).
+		WithFloatVectorColumn(repository.FieldEmbedding, int(m.dim), vectors)
+
+	_, err = m.client.Insert(ctx, opt)
 	if err != nil {
 		log.Printf("[ERROR] Failed to insert %d document(s) into collection %q: %v", len(docs), collectionName, err)
 		return fmt.Errorf("error inserting data %w", err)
@@ -251,6 +294,8 @@ func (m *milvus) Insert(ctx context.Context, collectionName string, docs []repos
 }
 
 func (m *milvus) Search(ctx context.Context, collectionName string, queryVector []float32, topK int, maxDistance float32) ([]repository.SearchResult, error) {
+	collectionName = normalizeCollectionName(collectionName)
+
 	log.Printf("[INFO] Searching collection %q (topK=%d, maxDistance=%.4f)", collectionName, topK, maxDistance)
 
 	searchResult, err := m.client.Search(ctx, milvusclient.NewSearchOption(collectionName, topK, []entity.Vector{
@@ -296,58 +341,68 @@ func readDocument(rs milvusclient.ResultSet, i int) (repository.Document, error)
 		}
 		return col.GetAsString(i)
 	}
-	
-	content, err := getStr("content")
+	// getJSON returns the raw JSON value of a JSON column (e.g. tags, metadata).
+	getJSON := func(colName string) ([]byte, error) {
+		col := rs.GetColumn(colName)
+		if col == nil {
+			return nil, nil // column may not exist in older schemas
+		}
+		v, err := col.Get(i)
+		if err != nil {
+			return nil, err
+		}
+		b, ok := v.([]byte)
+		if !ok {
+			return nil, fmt.Errorf("column %q is not a JSON column", colName)
+		}
+		return b, nil
+	}
+
+	summary, err := getStr(repository.FieldSummary)
 	if err != nil {
 		return repository.Document{}, err
 	}
-	prTitle, err := getStr("pr_title")
+	content, err := getStr(repository.FieldContent)
 	if err != nil {
 		return repository.Document{}, err
 	}
-	prDesc, err := getStr("pr_description")
+	kind, err := getStr(repository.FieldKind)
 	if err != nil {
 		return repository.Document{}, err
 	}
-	prDiff, err := getStr("pr_diff")
+	title, err := getStr(repository.FieldTitle)
 	if err != nil {
 		return repository.Document{}, err
 	}
-	prComments, err := getStr("pr_comments")
+	source, err := getStr(repository.FieldSource)
 	if err != nil {
 		return repository.Document{}, err
 	}
-	jiraKey, err := getStr("jira_issue_key")
+	tagsRaw, err := getJSON(repository.FieldTags)
 	if err != nil {
 		return repository.Document{}, err
 	}
-	jiraSummary, err := getStr("jira_summary")
-	if err != nil {
-		return repository.Document{}, err
-	}
-	jiraDesc, err := getStr("jira_description")
-	if err != nil {
-		return repository.Document{}, err
-	}
-	jiraComments, err := getStr("jira_comments")
-	if err != nil {
-		return repository.Document{}, err
-	}
-	message, err := getStr("message")
+	metadataRaw, err := getJSON(repository.FieldMetadata)
 	if err != nil {
 		return repository.Document{}, err
 	}
 
-	return repository.Document{
-		Content:         content,
-		PRTitle:         prTitle,
-		PRDescription:   prDesc,
-		PRDiff:          prDiff,
-		PRComments:      prComments,
-		JiraIssueKey:    jiraKey,
-		JiraSummary:     jiraSummary,
-		JiraDescription: jiraDesc,
-		JiraComments:    jiraComments,
-		Message:         message,
-	}, nil
+	doc := repository.Document{
+		Summary: summary,
+		Content: content,
+		Kind:    kind,
+		Title:   title,
+		Source:  source,
+	}
+	if len(tagsRaw) > 0 {
+		if err := json.Unmarshal(tagsRaw, &doc.Tags); err != nil {
+			return repository.Document{}, fmt.Errorf("failed to unmarshal tags for row %d: %w", i, err)
+		}
+	}
+	if len(metadataRaw) > 0 {
+		if err := json.Unmarshal(metadataRaw, &doc.Metadata); err != nil {
+			return repository.Document{}, fmt.Errorf("failed to unmarshal metadata for row %d: %w", i, err)
+		}
+	}
+	return doc, nil
 }

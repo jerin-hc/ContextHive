@@ -3,27 +3,26 @@ package main
 import (
 	"context"
 	"log"
+	"os"
+	"strconv"
 
-	"github.com/jerin-stack/CtxHive/internal/milvus"
-	"github.com/jerin-stack/CtxHive/internal/ollama"
+	"github.com/jerin-stack/CtxHive/internal/model/ollama"
+	"github.com/jerin-stack/CtxHive/internal/repository/milvus"
 	"github.com/jerin-stack/CtxHive/internal/server"
 )
 
-const (
-	milvusAddress = "http://localhost:19530"
-	ollamaAddress = "http://localhost:11434"
-	serverPort    = "8080"
-
-	generateModel = "qwen2.5-coder:7b"
-	embedModel    = "nomic-embed-text:v1.5"
-
-	cappacity = 65535 
-	dim       = 768
-)
-
 func main() {
-	log.Printf("[INFO] Starting CtxHive (milvus=%s, ollama=%s, port=%s, generate_model=%s, embed_model=%s, dim=%d, capacity=%d)",
-		milvusAddress, ollamaAddress, serverPort, generateModel, embedModel, dim, cappacity)
+	milvusAddress := getEnv("CTXHIVE_MILVUS_ADDR")
+	ollamaAddress := getEnv("CTXHIVE_OLLAMA_ADDR")
+	serverPort := getEnv("CTXHIVE_PORT")
+
+	embedModel := getEnv("CTXHIVE_EMBED_MODEL") // nomic-embed-text:v1.5
+
+	cappacity := getEnvInt64("CTXHIVE_CAPACITY") // 65535
+	dim := getEnvInt64("CTXHIVE_DIM")            // 768
+
+	log.Printf("[INFO] Starting CtxHive (milvus=%s, ollama=%s, port=%s, embed_model=%s, dim=%d, capacity=%d)",
+		milvusAddress, ollamaAddress, serverPort, embedModel, dim, cappacity)
 
 	m, err := milvus.NewMilvusClient(context.Background(), milvusAddress, cappacity, dim)
 	if err != nil {
@@ -31,20 +30,9 @@ func main() {
 		log.Panic(err)
 	}
 
-	o, err := ollama.NewOllamaClient(context.Background(), ollamaAddress, embedModel, generateModel)
+	o, err := ollama.NewOllamaClient(context.Background(), ollamaAddress, embedModel)
 	if err != nil {
 		log.Printf("[ERROR] Failed to create Ollama client: %v", err)
-		log.Panic(err)
-	}
-
-	log.Printf("[INFO] Pulling generate model %q", generateModel)
-	if err := o.Pull(generateModel); err != nil {
-		log.Printf("[ERROR] Failed to pull generate model %q: %v", generateModel, err)
-		log.Panic(err)
-	}
-	log.Printf("[INFO] Pulling embed model %q", embedModel)
-	if err := o.Pull(embedModel); err != nil {
-		log.Printf("[ERROR] Failed to pull embed model %q: %v", embedModel, err)
 		log.Panic(err)
 	}
 
@@ -54,4 +42,20 @@ func main() {
 		log.Printf("[ERROR] Server stopped unexpectedly: %v", err)
 		log.Panic(err)
 	}
+}
+func getEnv(key string) string {
+	v, ok := os.LookupEnv(key)
+	if !ok || v == "" {
+		log.Panicf("[FATAL] Required environment variable %s is not set", key)
+	}
+	return v
+}
+
+func getEnvInt64(key string) int64 {
+	v := getEnv(key)
+	n, err := strconv.ParseInt(v, 10, 64)
+	if err != nil {
+		log.Panicf("[FATAL] Environment variable %s=%q is not a valid int64: %v", key, v, err)
+	}
+	return n
 }

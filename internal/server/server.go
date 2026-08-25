@@ -11,28 +11,18 @@ import (
 )
 
 type Server struct {
-	ctx          context.Context
-	documentName string
-	repository   repository.Repository
-	model        model.Model
-	port         string
+	ctx        context.Context
+	repository repository.Repository
+	model      model.Model
+	port       string
 }
 
 func New(ctx context.Context, port string, repository repository.Repository, model model.Model) *Server {
-	name := "document1122"
-	log.Printf("[INFO] Creating schema for collection %q", name)
-	if err := repository.CreateSchema(ctx, name); err != nil {
-		log.Printf("[ERROR] Failed to create schema for collection %q: %v", name, err)
-		log.Panic(err)
-	}
-	log.Printf("[INFO] Schema ready for collection %q", name)
-
 	return &Server{
-		ctx:          ctx,
-		documentName: name,
-		repository:   repository,
-		model:        model,
-		port:         port,
+		ctx:        ctx,
+		repository: repository,
+		model:      model,
+		port:       port,
 	}
 }
 
