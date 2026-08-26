@@ -2,6 +2,13 @@
 
 **Engineering memory that works like your brain — store context once, find it when you need it.**
 
+```text
+┌──────────────┐        ┌──────────────┐        ┌──────────────┐
+│ Coding Agent │  MCP   │  MCP Server  │  HTTP  │   CtxHive    │
+│ (MCP client) │───────▶│    (mcp/)    │───────▶│    :8080     │
+└──────────────┘        └──────────────┘        └──────────────┘
+```
+
 CtxHive stores the context you accumulate while working: design docs, decision logs, incident notes, code snippets, meeting summaries. Each record is described by a `summary` that gets embedded and stored in a vector database. When a new requirement or question comes up, semantic search surfaces the relevant past context so you don't start from scratch.
 
 ## How It Works
@@ -86,6 +93,16 @@ go run main.go
 ```
 
 The server starts on `http://localhost:8080` with the Web UI at that address.
+
+## MCP Server
+
+For LLM clients (Copilot, IBM BOB, Claude Code, Claude Desktop, …) there is an [MCP (Model Context Protocol)](https://modelcontextprotocol.io) server in [`mcp/`](mcp/). It is a thin stdio server that exposes the API's content endpoints as `store_content` and `query_content` tools, forwarding every call to the CtxHive HTTP API:
+
+```
+LLM client ──stdio──▶ MCP server ──HTTP──▶ CtxHive API (:8080)
+```
+
+Installation, configuration, and client registration are documented in [`mcp/README.md`](mcp/README.md).
 
 ## Configuration
 
@@ -206,6 +223,11 @@ CtxHive/
 │       ├── request_schema.go        # ContentRequest / QueryRequest types
 │       └── frontend/
 │           └── index.html           # Embedded Web UI
+├── mcp/                              # MCP server for LLM clients — see mcp/README.md
+│   ├── main.go                       # stdio MCP server — forwards tool calls to the HTTP API
+│   ├── install.sh                    # Builds a static binary into ./bin/mcp
+│   ├── bin/                          # Built binary (from install.sh)
+│   └── README.md                     # MCP server documentation
 └── go.mod
 ```
 
