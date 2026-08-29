@@ -48,12 +48,6 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) []Route {
 }
 
 func (s *Server) handlePostContent(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		log.Printf("[WARN] handlePostContent called with wrong method: %s", r.Method)
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
 	var req ContentRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		log.Printf("[WARN] Invalid JSON body in POST /content: %v", err)
@@ -113,12 +107,6 @@ func (s *Server) handlePostContent(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleQueryContent(w http.ResponseWriter, r *http.Request) {
-	if r.Method != "QUERY" {
-		log.Printf("[WARN] handleQueryContent called with wrong method: %s", r.Method)
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
 	var req QueryRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		log.Printf("[WARN] Invalid JSON body in QUERY /content: %v", err)
@@ -166,11 +154,6 @@ func (s *Server) handleQueryContent(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleServeUI(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		log.Printf("[WARN] handleServeUI called with wrong method: %s", r.Method)
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
 	html, err := frontendFS.ReadFile("frontend/index.html")
 	if err != nil {
 		log.Printf("[ERROR] Failed to read frontend HTML: %v", err)

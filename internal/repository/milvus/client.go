@@ -26,6 +26,7 @@ const (
 // fieldNames lists every user-defined scalar column in the schema (excluding id and embedding).
 // Used by both Insert (to build column slices) and Search (to request output fields).
 var fieldNames = []string{
+	repository.FieldID,
 	repository.FieldSummary,
 	repository.FieldContent,
 	repository.FieldKind,
@@ -358,6 +359,18 @@ func readDocument(rs milvusclient.ResultSet, i int) (repository.Document, error)
 		return b, nil
 	}
 
+	getInt64 := func(colName string) (int64, error){
+		col := rs.GetColumn(colName)
+		if col == nil {
+			return 0, nil // column may not exist in older schemas
+		}
+		return col.GetAsInt64(i)
+	}
+
+	id, err := getInt64(repository.FieldID)
+	if err != nil {
+		return repository.Document{}, err
+	}
 	summary, err := getStr(repository.FieldSummary)
 	if err != nil {
 		return repository.Document{}, err
@@ -388,6 +401,7 @@ func readDocument(rs milvusclient.ResultSet, i int) (repository.Document, error)
 	}
 
 	doc := repository.Document{
+		ID: id,
 		Summary: summary,
 		Content: content,
 		Kind:    kind,

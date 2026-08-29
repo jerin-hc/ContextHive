@@ -16,6 +16,7 @@ const (
 // gets embedded into the vector used for semantic search. The remaining fields
 // are preserved alongside the embedding for retrieval.
 type Document struct {
+	ID int64 `json:"id"`
 	Summary string `json:"summary"` // the record's description; embedded for semantic search
 	Content string `json:"content"` // the full markdown text of the record
 
