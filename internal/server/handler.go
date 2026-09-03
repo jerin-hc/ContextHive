@@ -44,7 +44,24 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) []Route {
 	register("POST /content", requireJSONContentType(s.handlePostContent))
 	register("QUERY /content", requireJSONContentType(s.handleQueryContent))
 
+	register("GET /collections", s.handleListCollection)
 	return routes
+}
+
+func (s *Server) handleListCollection(w http.ResponseWriter, r *http.Request) {
+	docs, err := s.repository.ListCollection(s.ctx)
+	if err != nil {
+		log.Printf("[ERROR] Failed to get collections in GET /collections: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	log.Println("[INFO] GET /collections — fetched collections successfully")
+
+	json.NewEncoder(w).Encode(map[string]any{
+		"status":  "ok",
+		"results": docs,
+	})
 }
 
 func (s *Server) handlePostContent(w http.ResponseWriter, r *http.Request) {
@@ -81,9 +98,10 @@ func (s *Server) handlePostContent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("[INFO] POST /content — inserting document into collection %q", name)
+	log.Printf("[INFO] POST /content — upserting collection into collection %q", name)
 
 	doc := repository.Document{
+		ID:       req.ID,
 		Summary:  req.Summary,
 		Content:  req.Content,
 		Kind:     req.Kind,
@@ -93,13 +111,13 @@ func (s *Server) handlePostContent(w http.ResponseWriter, r *http.Request) {
 		Metadata: req.Metadata,
 	}
 
-	if err := s.repository.Insert(s.ctx, name, []repository.Document{doc}, vec); err != nil {
-		log.Printf("[ERROR] Failed to insert document in POST /content: %v", err)
+	if err := s.repository.Upsert(s.ctx, name, []repository.Document{doc}, vec); err != nil {
+		log.Printf("[ERROR] Failed to upsert collection in POST /content: %v", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 
-	log.Printf("[INFO] POST /content — document stored successfully (collection=%q, summary_len=%d)", name, len(req.Summary))
+	log.Printf("[INFO] POST /content — collection stored successfully (collection=%q, summary_len=%d)", name, len(req.Summary))
 
 	json.NewEncoder(w).Encode(map[string]string{
 		"status": "ok",

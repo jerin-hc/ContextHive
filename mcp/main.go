@@ -37,6 +37,7 @@ const methodQuery = "QUERY"
 // StoreContentInput matches the HTTP POST /content request body. Summary is
 // the description of the record and the text embedded for semantic search.
 type StoreContentInput struct {
+	ID int64 `json:"id" jsonschema:"the primary key of the record; use this ID to update an existing record"`
 	Summary     string            `json:"summary" jsonschema:"the description of the record; also the text embedded for semantic search"`
 	Content     string            `json:"content" jsonschema:"the full markdown text of the record"`
 	Kind        string            `json:"kind" jsonschema:"the kind of content e.g. message, git_pr or jira"`
@@ -62,6 +63,7 @@ type QueryContentInput struct {
 
 // Document mirrors the repository.Document JSON shape returned by the API.
 type Document struct {
+	ID int64 `json:"id"`
 	Summary  string            `json:"summary"`
 	Content  string            `json:"content"`
 	Kind     string            `json:"kind"`
@@ -82,6 +84,12 @@ type SearchResult struct {
 type QueryContentOutput struct {
 	Status  string         `json:"status" jsonschema:"always \"ok\" on success"`
 	Results []SearchResult `json:"results" jsonschema:"matching documents ordered by similarity; lower score means more similar"`
+}
+
+// ListProjectOutput matches the HTTP GET /collection response.
+type ListProjectOutput struct {
+	Status  string         `json:"status" jsonschema:"always \"ok\" on success"`
+	Results []string `json:"results" jsonschema:"avaliable project collections"`
 }
 
 // apiClient is a minimal client for the CtxHive HTTP API.
@@ -194,17 +202,31 @@ func (h *hive) queryContent(ctx context.Context, _ *mcp.CallToolRequest, in Quer
 	return nil, out, nil
 }
 
+// List Project implements GET /collections via the API.
+func (h *hive) ListProject(ctx context.Context, _ *mcp.CallToolRequest,  _ any) (*mcp.CallToolResult, ListProjectOutput, error) {
+	var out ListProjectOutput 
+	if err := h.api.do(ctx, http.MethodGet, "/collections","{}", &out); err != nil {
+		return nil, ListProjectOutput{}, fmt.Errorf("failed to search projects: %w", err)
+	}
+	return nil, out, nil
+}
+
 // registerTools adds the CtxHive tools to the MCP server.
 func registerTools(server *mcp.Server, h *hive) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "store_content",
-		Description: "Store a record in CtxHive (equivalent of POST /content). The summary is embedded for semantic search; the remaining fields are preserved alongside it.",
+		Description: "Insert or update a record in CtxHive (equivalent of POST /content). If an id is provided in the request, the existing record with that id is updated. If no id is provided, a new record is inserted. The summary is embedded for semantic search; the remaining fields are preserved alongside it.",
 	}, h.storeContent)
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "query_content",
 		Description: "Search stored records in CtxHive by meaning (equivalent of QUERY /content). Returns the most similar documents with their distance scores.",
 	}, h.queryContent)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "list_projects",
+		Description: "List the available project collections in CtxHive (equivalent of GET /collections). Returns the names of all available project collections.",
+	}, h.ListProject)
 }
 
 func main() {

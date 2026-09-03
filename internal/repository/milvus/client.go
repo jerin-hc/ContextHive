@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"time"
 
+	"github.com/milvus-io/milvus-proto/go-api/v3/milvuspb"
 	"github.com/milvus-io/milvus/client/v3/column"
 	"github.com/milvus-io/milvus/client/v3/entity"
 	"github.com/milvus-io/milvus/client/v3/index"
@@ -34,6 +36,15 @@ var fieldNames = []string{
 	repository.FieldTags,
 	repository.FieldSource,
 	repository.FieldMetadata,
+}
+
+type docFields struct {
+	ID      []int64
+	Summary []string
+	Content []string
+	Kind    []string
+	Title   []string
+	Source  []string
 }
 
 type milvus struct {
@@ -98,6 +109,23 @@ func normalizeCollectionName(name string) string {
 	return out
 }
 
+type listCollectionOption struct{}
+
+func (o listCollectionOption) Request() *milvuspb.ShowCollectionsRequest {
+	return &milvuspb.ShowCollectionsRequest{}
+}
+
+func (m *milvus) ListCollection(ctx context.Context) ([]string, error) {
+	log.Print("[INFO] fetching avaialbe collection")
+
+	collections, err := m.client.ListCollections(ctx, listCollectionOption{})
+	if err != nil {
+		log.Printf("[ERROR] Failed to get collections exists: %v", err)
+		return collections, fmt.Errorf("error get collections exists: %w", err)
+	}
+	return collections, err
+}
+
 func (m *milvus) CreateSchema(ctx context.Context, documentName string) error {
 	documentName = normalizeCollectionName(documentName)
 	log.Printf("[INFO] Creating/loading schema for collection %q", documentName)
@@ -120,7 +148,7 @@ func (m *milvus) CreateSchema(ctx context.Context, documentName string) error {
 					WithName(repository.FieldID).
 					WithDataType(entity.FieldTypeInt64).
 					WithIsPrimaryKey(true).
-					WithIsAutoID(true),
+					WithIsAutoID(false),
 			).
 			// --- Description embedded for semantic search ---
 			WithField(
@@ -208,15 +236,22 @@ func (m *milvus) CreateSchema(ctx context.Context, documentName string) error {
 // docFields extracts the string field values from a Document into individual slices
 // that can be passed to WithVarcharColumn. The slices are indexed in the same order
 // as the fieldNames package variable.
-func docFields(docs []repository.Document) map[string][]string {
+func docFieldsBuilder(docs []repository.Document) docFields {
 	n := len(docs)
-	return map[string][]string{
-		repository.FieldSummary: makeStrSlice(n, func(i int) string { return docs[i].Summary }),
-		repository.FieldContent: makeStrSlice(n, func(i int) string { return docs[i].Content }),
-		repository.FieldKind:    makeStrSlice(n, func(i int) string { return docs[i].Kind }),
-		repository.FieldTitle:   makeStrSlice(n, func(i int) string { return docs[i].Title }),
-		repository.FieldSource:  makeStrSlice(n, func(i int) string { return docs[i].Source }),
+	d := docFields{
+		ID: makeGenericSlice(n, func(i int) int64 {
+			if docs[i].ID <= 0 {
+				return time.Now().UnixNano()
+			}
+			return docs[i].ID
+		}),
+		Summary: makeGenericSlice(n, func(i int) string { return docs[i].Summary }),
+		Content: makeGenericSlice(n, func(i int) string { return docs[i].Content }),
+		Kind:    makeGenericSlice(n, func(i int) string { return docs[i].Kind }),
+		Title:   makeGenericSlice(n, func(i int) string { return docs[i].Title }),
+		Source:  makeGenericSlice(n, func(i int) string { return docs[i].Source }),
 	}
+	return d
 }
 
 // jsonColumn marshals one JSON value per document (used for the tags and metadata
@@ -233,25 +268,25 @@ func jsonColumn[T any](docs []repository.Document, fn func(repository.Document) 
 	return col, nil
 }
 
-func makeStrSlice(n int, fn func(int) string) []string {
-	s := make([]string, n)
+func makeGenericSlice[T comparable](n int, fn func(int) T) []T {
+	s := make([]T, n)
 	for i := range n {
 		s[i] = fn(i)
 	}
 	return s
 }
 
-func (m *milvus) Insert(ctx context.Context, collectionName string, docs []repository.Document, vectors [][]float32) error {
+func (m *milvus) Upsert(ctx context.Context, collectionName string, docs []repository.Document, vectors [][]float32) error {
 	collectionName = normalizeCollectionName(collectionName)
 
 	if len(docs) == 0 {
-		log.Printf("[WARN] Insert called on collection %q with 0 documents — nothing to insert", collectionName)
+		log.Printf("[WARN] Insert called on collection %q with 0 documents — nothing to upsert", collectionName)
 		return nil
 	}
 
 	log.Printf("[INFO] Inserting %d document(s) into collection %q", len(docs), collectionName)
 
-	fields := docFields(docs)
+	fields := docFieldsBuilder(docs)
 
 	tags, err := jsonColumn(docs, func(d repository.Document) []string {
 		if d.Tags == nil {
@@ -273,24 +308,25 @@ func (m *milvus) Insert(ctx context.Context, collectionName string, docs []repos
 	}
 
 	opt := milvusclient.NewColumnBasedInsertOption(collectionName).
-		WithVarcharColumn(repository.FieldSummary, fields[repository.FieldSummary]).
-		WithVarcharColumn(repository.FieldContent, fields[repository.FieldContent]).
-		WithVarcharColumn(repository.FieldKind, fields[repository.FieldKind]).
-		WithVarcharColumn(repository.FieldTitle, fields[repository.FieldTitle]).
-		WithVarcharColumn(repository.FieldSource, fields[repository.FieldSource]).
+		WithInt64Column(repository.FieldID, fields.ID).
+		WithVarcharColumn(repository.FieldSummary, fields.Summary).
+		WithVarcharColumn(repository.FieldContent, fields.Content).
+		WithVarcharColumn(repository.FieldKind, fields.Kind).
+		WithVarcharColumn(repository.FieldTitle, fields.Title).
+		WithVarcharColumn(repository.FieldSource, fields.Source).
 		WithColumns(
 			column.NewColumnJSONBytes(repository.FieldTags, tags),
 			column.NewColumnJSONBytes(repository.FieldMetadata, metadata),
 		).
 		WithFloatVectorColumn(repository.FieldEmbedding, int(m.dim), vectors)
 
-	_, err = m.client.Insert(ctx, opt)
+	_, err = m.client.Upsert(ctx, opt)
 	if err != nil {
-		log.Printf("[ERROR] Failed to insert %d document(s) into collection %q: %v", len(docs), collectionName, err)
-		return fmt.Errorf("error inserting data %w", err)
+		log.Printf("[ERROR] Failed to upsert %d document(s) into collection %q: %v", len(docs), collectionName, err)
+		return fmt.Errorf("error upserting data %w", err)
 	}
 
-	log.Printf("[INFO] Successfully inserted %d document(s) into collection %q", len(docs), collectionName)
+	log.Printf("[INFO] Successfully upserted %d document(s) into collection %q", len(docs), collectionName)
 	return nil
 }
 
@@ -301,7 +337,7 @@ func (m *milvus) Search(ctx context.Context, collectionName string, queryVector 
 
 	searchResult, err := m.client.Search(ctx, milvusclient.NewSearchOption(collectionName, topK, []entity.Vector{
 		entity.FloatVector(queryVector),
-	}).WithOutputFields(fieldNames...))
+	}).WithConsistencyLevel(entity.ClStrong).WithOutputFields(fieldNames...))
 	if err != nil {
 		log.Printf("[ERROR] Semantic search failed on collection %q: %v", collectionName, err)
 		return nil, fmt.Errorf("semantic search failed: %w", err)
@@ -359,7 +395,7 @@ func readDocument(rs milvusclient.ResultSet, i int) (repository.Document, error)
 		return b, nil
 	}
 
-	getInt64 := func(colName string) (int64, error){
+	getInt64 := func(colName string) (int64, error) {
 		col := rs.GetColumn(colName)
 		if col == nil {
 			return 0, nil // column may not exist in older schemas
@@ -401,7 +437,7 @@ func readDocument(rs milvusclient.ResultSet, i int) (repository.Document, error)
 	}
 
 	doc := repository.Document{
-		ID: id,
+		ID:      id,
 		Summary: summary,
 		Content: content,
 		Kind:    kind,
