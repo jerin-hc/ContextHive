@@ -1,6 +1,7 @@
 package server
 
 type ContentRequest struct {
+	ID          int64             `json:"id"`
 	Summary     string            `json:"summary"` // required: full description of the record; embedded for semantic search
 	Content     string            `json:"content"`
 	Kind        string            `json:"kind"`

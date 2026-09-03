@@ -16,6 +16,7 @@ const (
 // gets embedded into the vector used for semantic search. The remaining fields
 // are preserved alongside the embedding for retrieval.
 type Document struct {
+	ID      int64  `json:"id"`
 	Summary string `json:"summary"` // the record's description; embedded for semantic search
 	Content string `json:"content"` // the full markdown text of the record
 
@@ -47,9 +48,10 @@ type SearchResult struct {
 }
 
 type Repository interface {
-	Insert(ctx context.Context, name string, docs []Document, vectors [][]float32) error
+	Upsert(ctx context.Context, name string, docs []Document, vectors [][]float32) error
 	CreateSchema(ctx context.Context, name string) error
 	Search(ctx context.Context, collectionName string, queryVector []float32, topK int, maxDistance float32) ([]SearchResult, error)
 
+	ListCollection(ctx context.Context) ([]string, error)
 	GetMaxCappacity() int64
 }
